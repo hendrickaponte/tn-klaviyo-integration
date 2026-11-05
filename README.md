@@ -19,7 +19,8 @@ Stack: Supabase (Postgres + Edge Functions/Deno) + React/Vite + Nimbus DS + SDK 
 | Consentimiento de marketing | Opt-in | `accepts_marketing` → suscripción. Apagado por defecto. |
 | Pop-ups, formularios y Active on Site | Sí | Script onsite que carga `klaviyo.js` con la Public API key de cada tienda. |
 | Viewed Product | Sí | Datos mínimos: nombre, ID, URL, imagen y moneda. |
-| Added to Cart, Started Checkout, Refunded Order | No | Pendiente. No se conoce todavía cómo detectar el carrito en el tema. |
+| Added to Cart | Sí (probado en tienda real) | Vía NubeSDK (`cart:add:success`), no vía el script onload. Ver "Added to Cart (NubeSDK)" abajo. |
+| Started Checkout, Refunded Order | No | Pendiente. |
 | `ShippingOption` / tracking | No | No están en el nivel superior del pedido en la API 2025-03; probablemente en `fulfillments[]`, sin verificar. |
 | OAuth de Klaviyo | No | Usa una Private API key por tienda. |
 
@@ -38,13 +39,33 @@ Tienda ──script onsite (portal de TN)──► onsite-config (devuelve solo 
 - No se guardan datos de clientes en la base propia (solo IDs en los logs); los privacy webhooks hacen ack.
 - `onsite-config` responde con CORS `*` a propósito: el script corre en dominios de tienda arbitrarios y solo devuelve la Public API key, que ya es visible en el HTML de cualquier tienda con Klaviyo.
 
+### Added to Cart (NubeSDK)
+
+El evento `cart:add` / `cart:add:success` ([tiendanube.dev/apps/nube-sdk/events/cart](https://tiendanube.dev/apps/nube-sdk/events/cart)) **solo existe dentro de NubeSDK**: las apps NubeSDK corren en un Web Worker aislado (sin `window`, sin `document`, sin `_learnq`), así que no se puede escuchar desde `onsite/klaviyo-onsite.js` (ese script está registrado explícitamente "sin NubeSDK"). Por eso el soporte de ATC vive en un script aparte:
+
+```
+onsite/nube-sdk/   App NubeSDK (src/main.ts) que escucha cart:add:success y manda "Added to Cart"
+                   directo a la API pública de eventos de Klaviyo (POST a.klaviyo.com/client/events),
+                   sin pasar por nuestro backend. Mismo Partner Portal app que el script onload,
+                   pero es un SCRIPT NUEVO con el flag "Uses Nube SDK" habilitado (ver Despliegue).
+```
+
+Decisiones de esta parte:
+
+- **Identificación del perfil**: si `state.customer.contact.email` está disponible (cliente logueado) se manda `email`; si no, se usa un `anonymous_id` estable por visitante, generado con `crypto.randomUUID()` y persistido con `nube.getBrowserAPIs().asyncLocalStorage` (scopeado a la app por NubeSDK). Klaviyo mergea ese perfil anónimo cuando el mismo visitante se identifica después (ej. al comprar). La mayoría de los Added to Cart van a ser anónimos: es la norma en cualquier tienda, no un bug.
+- **Por qué la API pública de eventos y no `klaviyo-api`**: igual que Viewed Product, el evento sale directo del navegador con la Public API key; no hay sesión de nuestro backend ni se necesita la Private key.
+- `state.eventPayload` es un objeto en Storefront y un array en Checkout (ver doc); se normaliza a lista y se manda un evento por ítem.
+- Sin reintentos: si el `fetch` falla (red caída, bloqueador de contenido) el evento se pierde silenciosamente — mismo criterio que el resto del script onsite ("nunca romper la tienda").
+- `KLAVIYO_REVISION` queda hardcodeada en el archivo (el worker no tiene `Deno.env`): mantenerla sincronizada a mano con `supabase/functions/_shared/klaviyo.ts`.
+
 ## Estructura
 
 ```
 supabase/functions/   Edge Functions (klaviyo-api, tn-webhook, tn-oauth-callback, onsite-config) y _shared/
 supabase/migrations/  Esquema (init + onsite)
 web/                  Frontend embebido (React + Vite + Nimbus)
-onsite/               Script que se sube al Partner Portal de Tiendanube
+onsite/               Scripts que se suben al Partner Portal de Tiendanube
+onsite/nube-sdk/      Script NubeSDK (Added to Cart); necesita build (ver Despliegue)
 tests/                Pruebas sin dependencias (Node >= 22.18)
 ```
 
@@ -61,6 +82,7 @@ tests/                Pruebas sin dependencias (Node >= 22.18)
    - URL de la app embebida: la del frontend.
    - Webhooks de privacidad (`store/redact`, `customers/redact`, `customers/data_request`): `https://<ref>.supabase.co/functions/v1/tn-webhook`
    - **Script onsite**: edita `CONFIG_URL` en `onsite/klaviyo-onsite.js` (reemplaza `<YOUR_PROJECT_REF>`) y súbelo como script nuevo: lugar Store, evento `onload`, sin NubeSDK, instalación automática. **Publica la versión**: en borrador no se sirve. Si la app ya estaba instalada en una tienda antes de crear el script, reinstálala en esa tienda.
+   - **Script NubeSDK (Added to Cart)**: en `onsite/nube-sdk/`, edita `CONFIG_URL` en `src/main.ts` (mismo `<YOUR_PROJECT_REF>`), `npm install` y `npm run build` (bundlea `dist/main.min.js` con tsup). En la misma app del Partner Portal, **Scripts → Create script** (es un script nuevo, no una app nueva): habilita el flag **Uses Nube SDK**, apunta el archivo/URL a `dist/main.min.js` y publicá la versión. Si vas a desarrollar en vivo, usa `npm run dev` + Local Mode de NubeSDK DevTools en vez de una URL de dev fija. Ver [tiendanube.dev/apps/nube-sdk/getting-started](https://tiendanube.dev/apps/nube-sdk/getting-started).
 6. **Klaviyo**: crea una Private API key con acceso de lectura/escritura a cuentas, perfiles, eventos, catálogo y suscripciones (solo se puede acotar al crearla). Para los pop-ups necesitas además la Public API key (6 caracteres).
 7. Instala la app en una tienda de prueba, conecta la key, guarda los ajustes y lanza la sincronización inicial.
 
@@ -81,6 +103,7 @@ tests/                Pruebas sin dependencias (Node >= 22.18)
 - No se envía `inventory_policy` (la documentación de Klaviyo es inconsistente).
 - Versión de API de Tiendanube `2025-03` y revisión de Klaviyo `2025-10-15`: ambas configurables por entorno; confirma que sigan vigentes.
 - Tiendas de Brasil (`api.nuvemshop.com.br`): fuera de alcance.
+- Added to Cart: sin reintentos (se pierde si el `fetch` falla) y sin lock de idempotencia (`cart:add:success` duplicado por la plataforma mandaría el evento dos veces; no se observó en pruebas pero no está garantizado por la doc). El `anonymous_id` vive en `asyncLocalStorage` de NubeSDK: se pierde si el visitante borra datos del sitio o cambia de navegador/dispositivo.
 - Para homologar faltan: política de privacidad publicada, pantalla de errores de webhooks, manejo de `app/suspended` y `app/resumed`.
 
 ## Pruebas
@@ -88,6 +111,7 @@ tests/                Pruebas sin dependencias (Node >= 22.18)
 ```
 node --experimental-strip-types tests/shared.test.mjs
 node tests/onsite.test.mjs
+node --experimental-strip-types tests/nube-sdk-atc.test.mjs
 ```
 
-Cubren cifrado, HMAC, validación del JWT, mapeos, eventos de pedido, catálogo con variantes, reintentos y errores de Klaviyo (con `fetch` simulado) y el script onsite. **No cubren** las Edge Functions de punta a punta ni el frontend.
+Cubren cifrado, HMAC, validación del JWT, mapeos, eventos de pedido, catálogo con variantes, reintentos y errores de Klaviyo (con `fetch` simulado), el script onsite y el script NubeSDK de Added to Cart (con un `nube` simulado: `on`/`getState`/`getBrowserAPIs`, y `fetch` global pisado). **No cubren** las Edge Functions de punta a punta ni el frontend. El script NubeSDK de Added to Cart se validó manualmente en una tienda real, fuera de estas pruebas automáticas.
