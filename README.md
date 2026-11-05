@@ -41,6 +41,8 @@ Tienda ──script onsite (portal de TN)──► onsite-config (devuelve solo 
 
 ### Added to Cart (NubeSDK)
 
+> **Requisito importante:** Added to Cart necesita el Storefront SDK (NubeSDK). Para la tienda de prueba hay que pedir a Tiendanube que active el tag `enable-nube-sdk-all-apps`. Una vez que la app esté homologada y publicada, ya no hace falta pedirlo para las demás tiendas.
+
 El evento `cart:add` / `cart:add:success` ([tiendanube.dev/apps/nube-sdk/events/cart](https://tiendanube.dev/apps/nube-sdk/events/cart)) **solo existe dentro de NubeSDK**: las apps NubeSDK corren en un Web Worker aislado (sin `window`, sin `document`, sin `_learnq`), así que no se puede escuchar desde `onsite/klaviyo-onsite.js` (ese script está registrado explícitamente "sin NubeSDK"). Por eso el soporte de ATC vive en un script aparte:
 
 ```
@@ -82,7 +84,7 @@ tests/                Pruebas sin dependencias (Node >= 22.18)
    - URL de la app embebida: la del frontend.
    - Webhooks de privacidad (`store/redact`, `customers/redact`, `customers/data_request`): `https://<ref>.supabase.co/functions/v1/tn-webhook`
    - **Script onsite**: edita `CONFIG_URL` en `onsite/klaviyo-onsite.js` (reemplaza `<YOUR_PROJECT_REF>`) y súbelo como script nuevo: lugar Store, evento `onload`, sin NubeSDK, instalación automática. **Publica la versión**: en borrador no se sirve. Si la app ya estaba instalada en una tienda antes de crear el script, reinstálala en esa tienda.
-   - **Script NubeSDK (Added to Cart)**: en `onsite/nube-sdk/`, edita `CONFIG_URL` en `src/main.ts` (mismo `<YOUR_PROJECT_REF>`), `npm install` y `npm run build` (bundlea `dist/main.min.js` con tsup). En la misma app del Partner Portal, **Scripts → Create script** (es un script nuevo, no una app nueva): habilita el flag **Uses Nube SDK**, apunta el archivo/URL a `dist/main.min.js` y publicá la versión. Si vas a desarrollar en vivo, usa `npm run dev` + Local Mode de NubeSDK DevTools en vez de una URL de dev fija. Ver [tiendanube.dev/apps/nube-sdk/getting-started](https://tiendanube.dev/apps/nube-sdk/getting-started).
+   - **Script NubeSDK (Added to Cart)** (requiere el tag `enable-nube-sdk-all-apps` en la tienda de prueba; ver "Added to Cart (NubeSDK)"): en `onsite/nube-sdk/`, edita `CONFIG_URL` en `src/main.ts` (mismo `<YOUR_PROJECT_REF>`), `npm install` y `npm run build` (bundlea `dist/main.min.js` con tsup). En la misma app del Partner Portal, **Scripts → Create script** (es un script nuevo, no una app nueva): habilita el flag **Uses Nube SDK**, apunta el archivo/URL a `dist/main.min.js` y publicá la versión. Si vas a desarrollar en vivo, usa `npm run dev` + Local Mode de NubeSDK DevTools en vez de una URL de dev fija. Ver [tiendanube.dev/apps/nube-sdk/getting-started](https://tiendanube.dev/apps/nube-sdk/getting-started).
 6. **Klaviyo**: crea una Private API key con acceso de lectura/escritura a cuentas, perfiles, eventos, catálogo y suscripciones (solo se puede acotar al crearla). Para los pop-ups necesitas además la Public API key (6 caracteres).
 7. Instala la app en una tienda de prueba, conecta la key, guarda los ajustes y lanza la sincronización inicial.
 
