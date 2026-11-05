@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { App } from "../onsite/nube-sdk/src/main.ts";
 import {
   addedToCartEventBody,
+  localized,
+  startedCheckoutEventBody,
+  viewedProductEventBody,
   cartAddItems,
   httpsOnly,
   isValidCompanyId,
@@ -68,6 +71,7 @@ await t("addedToCartEventBody con perfil anónimo y sin thumbnail/sku no ensucia
 
 function mockNube({ store = { id: 1234567 }, customer = null, eventPayload = null, storage = new Map() } = {}) {
   const listeners = {};
+  const session = new Map();
   const nube = {
     on: (event, fn) => { listeners[event] = fn; },
     send: () => {},
@@ -77,6 +81,11 @@ function mockNube({ store = { id: 1234567 }, customer = null, eventPayload = nul
         getItem: async (k) => (storage.has(k) ? storage.get(k) : null),
         setItem: async (k, v) => { storage.set(k, v); },
         removeItem: async (k) => { storage.delete(k); },
+      },
+      asyncSessionStorage: {
+        getItem: async (k) => (session.has(k) ? session.get(k) : null),
+        setItem: async (k, v) => { session.set(k, v); },
+        removeItem: async (k) => { session.delete(k); },
       },
     }),
   };
@@ -167,4 +176,95 @@ await t("un fetch que rechaza (red caída) no rompe el listener", async () => {
   } finally { globalThis.fetch = realFetch; }
 });
 
-console.log(`\n${n} pruebas nube-sdk (ATC) OK`);
+await t("localized prefiere el idioma de la tienda y cae al primero disponible", () => {
+  assert.equal(localized({ es: "Hola", pt: "Oi" }, "pt"), "Oi");
+  assert.equal(localized({ pt: "Oi" }, "es"), "Oi");
+  assert.equal(localized("Plano"), "Plano");
+  assert.equal(localized(undefined), undefined);
+});
+
+await t("viewedProductEventBody arma Viewed Product con precio de la primera variante", () => {
+  const body = viewedProductEventBody(
+    { id: 77, name: { es: "Remera" }, images: [{ src: "https://cdn.x/r.jpg" }], variants: [{ price: "250" }], tags: "a,b" },
+    "https://shop.example/productos/remera/", "ARS", "es", { anonymous_id: "v-1" },
+  );
+  const a = body.data.attributes;
+  assert.equal(a.metric.data.attributes.name, "Viewed Product");
+  assert.equal(a.properties.ProductID, 77);
+  assert.equal(a.properties.ProductName, "Remera");
+  assert.equal(a.properties.ImageURL, "https://cdn.x/r.jpg");
+  assert.equal(a.properties.Price, 250);
+  assert.equal(a.value, 250);
+  assert.equal(a.value_currency, "ARS");
+});
+
+await t("startedCheckoutEventBody arma Started Checkout con Items, $value y CheckoutURL", () => {
+  const body = startedCheckoutEventBody(
+    { id: "cart-1", items: [{ product_id: 1, variant_id: 2, name: "A", price: "10", quantity: 2, url: "https://s/a", thumbnail: "https://c/a.jpg" }], prices: { total: 25, subtotal: 20 } },
+    "https://shop.example/checkout/v3/start/1", "ARS", { email: "a@b.com" },
+  );
+  const a = body.data.attributes;
+  assert.equal(a.metric.data.attributes.name, "Started Checkout");
+  assert.equal(a.properties.$event_id, "cart-1");
+  assert.equal(a.properties.$value, 25);
+  assert.deepEqual(a.properties.ItemNames, ["A"]);
+  assert.equal(a.properties.CheckoutURL, "https://shop.example/checkout/v3/start/1");
+  assert.equal(a.properties.Items[0].RowTotal, 20);
+  assert.equal(a.value, 25);
+});
+
+function klaviyoMock(calls) {
+  return async (url, opts) => {
+    calls.push({ url: String(url), opts });
+    if (String(url).includes("onsite-config")) return { ok: true, json: async () => ({ company_id: "AbC123" }) };
+    return { ok: true, json: async () => ({}) };
+  };
+}
+const eventsOf = (calls) => calls.filter((c) => c.url.startsWith("https://a.klaviyo.com/client/events"))
+  .map((c) => JSON.parse(c.opts.body).data.attributes.metric.data.attributes.name);
+
+await t("Viewed Product: page:loaded + location:updated en la misma URL manda un solo evento; en otra URL, otro", async () => {
+  const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
+  try {
+    const { nube, listeners } = mockNube();
+    App(nube);
+    const st = (url, id) => ({
+      store: { id: 5, language: "es", currency_details: { code: "ARS" } }, customer: null,
+      location: { url, page: { type: "product", data: { product: { id, name: { es: "P" }, variants: [{ price: "1" }], images: [] } } } },
+    });
+    await listeners["page:loaded"](st("https://s/p1", 1));
+    await listeners["location:updated"](st("https://s/p1", 1));
+    await listeners["location:updated"](st("https://s/p2", 2));
+    assert.deepEqual(eventsOf(calls), ["Viewed Product", "Viewed Product"]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await t("Viewed Product: páginas que no son de producto no mandan nada", async () => {
+  const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
+  try {
+    const { nube, listeners } = mockNube();
+    App(nube);
+    await listeners["page:loaded"]({ store: { id: 5 }, customer: null, location: { url: "https://s/", page: { type: "home" } } });
+    assert.deepEqual(eventsOf(calls), []);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await t("Started Checkout: solo en step start, y no se repite para el mismo carrito", async () => {
+  const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
+  try {
+    const { nube, listeners } = mockNube();
+    App(nube);
+    const st = (step) => ({
+      store: { id: 5, currency_details: { code: "ARS" } }, customer: null,
+      cart: { id: "c1", items: [{ product_id: 1, price: "5", quantity: 1 }], prices: { total: 5 } },
+      location: { url: "https://s/checkout/start", page: { type: "checkout", data: { step } } },
+    });
+    await listeners["checkout:ready"](st("payment"));
+    assert.deepEqual(eventsOf(calls), []);
+    await listeners["checkout:ready"](st("start"));
+    await listeners["checkout:ready"](st("start"));
+    assert.deepEqual(eventsOf(calls), ["Started Checkout"]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+console.log(`\n${n} pruebas nube-sdk OK`);

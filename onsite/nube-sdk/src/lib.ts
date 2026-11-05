@@ -76,3 +76,95 @@ export function addedToCartEventBody(item: AddedItem, currency: string | undefin
     },
   };
 }
+
+// ---- Viewed Product y Started Checkout (mismo patrón: Create Client Event con Public API key) ----
+
+export type LocalizedName = Record<string, string | undefined> | string | undefined | null;
+
+/** Los nombres de producto vienen localizados ({ es: "..." }). Prefiere el idioma de la tienda. */
+export function localized(v: LocalizedName, lang?: string): string | undefined {
+  if (typeof v === "string") return v || undefined;
+  if (!v || typeof v !== "object") return undefined;
+  if (lang && v[lang]) return v[lang];
+  return Object.values(v).find((x) => typeof x === "string" && x) as string | undefined;
+}
+
+type ViewedProduct = {
+  id?: number;
+  name?: LocalizedName;
+  images?: { src?: string }[];
+  variants?: { price?: string | number | null }[];
+  tags?: string;
+};
+
+export function viewedProductEventBody(
+  product: ViewedProduct, url: string, currency: string | undefined, lang: string | undefined, profile: ProfileIdentifier,
+) {
+  const price = product.variants?.length ? money(product.variants[0].price) : undefined;
+  const properties = clean({
+    ProductID: product.id,
+    ProductName: localized(product.name, lang),
+    URL: httpsOnly(url),
+    ImageURL: httpsOnly(product.images?.[0]?.src),
+    Price: price || undefined,
+    Currency: currency,
+    Tags: product.tags || undefined,
+    "Source Name": "Tiendanube",
+  });
+  return eventBody("Viewed Product", properties, profile, price, currency);
+}
+
+type CheckoutCart = {
+  id?: string;
+  items?: AddedItem[];
+  prices?: { total?: number; subtotal?: number };
+};
+
+export function startedCheckoutEventBody(
+  cart: CheckoutCart, checkoutUrl: string | undefined, currency: string | undefined, profile: ProfileIdentifier,
+) {
+  const items = (cart.items ?? []).map((i) => {
+    const price = money(i.price);
+    const quantity = money(i.quantity) || 1;
+    return clean({
+      ProductID: i.product_id,
+      VariantID: i.variant_id,
+      SKU: i.sku ?? undefined,
+      ProductName: i.name,
+      Quantity: quantity,
+      ItemPrice: price,
+      RowTotal: price * quantity,
+      ProductURL: httpsOnly(i.url),
+      ImageURL: httpsOnly(i.thumbnail),
+    });
+  });
+  const value = money(cart.prices?.total) || money(cart.prices?.subtotal);
+  const properties = clean({
+    $event_id: cart.id,
+    $value: value,
+    ItemNames: items.map((i) => i.ProductName).filter(Boolean),
+    CheckoutURL: httpsOnly(checkoutUrl),
+    Items: items,
+    "Source Name": "Tiendanube",
+  });
+  return eventBody("Started Checkout", properties, profile, value, currency);
+}
+
+function eventBody(
+  metric: string, properties: Record<string, unknown>, profile: ProfileIdentifier,
+  value: number | undefined, currency: string | undefined,
+) {
+  return {
+    data: {
+      type: "event",
+      attributes: {
+        properties,
+        metric: { data: { type: "metric", attributes: { name: metric } } },
+        profile: { data: { type: "profile", attributes: profile } },
+        value,
+        value_currency: currency,
+        time: new Date().toISOString(),
+      },
+    },
+  };
+}

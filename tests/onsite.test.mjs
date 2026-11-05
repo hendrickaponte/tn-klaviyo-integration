@@ -35,19 +35,10 @@ await t("company_id inválido (no 6 alfanum.) se ignora: no inyecta nada", async
   const r = run({ LS: { store: { id: 1 } }, config: { company_id: "x\"><script>" } }); await r.settle();
   assert.equal(r.appended.length, 0);
 });
-await t("con key válida carga klaviyo.js y envía Viewed Product + trackViewedItem", async () => {
-  const r = run({ LS: { store: { id: 1234567 }, currency: "MXN", product: { id: 319628246, name: "Audifonos", tags: "gamer" } }, config: { company_id: "AbC123" } }); await r.settle();
+await t("con key válida solo carga klaviyo.js (los eventos de producto los manda el SDK)", async () => {
+  const r = run({ LS: { store: { id: 1234567 }, currency: "MXN", product: { id: 319628246, name: "Audifonos" } }, config: { company_id: "AbC123" } }); await r.settle();
   assert.equal(r.appended[0].src, "https://static.klaviyo.com/onsite/js/klaviyo.js?company_id=AbC123");
-  const q = r.win._learnq; assert.equal(q[0][0], "track"); assert.equal(q[0][1], "Viewed Product");
-  assert.equal(q[0][2].ProductID, "319628246"); assert.equal(q[0][2].URL, "https://shop.example/productos/mouse/");
-  assert.equal(q[1][0], "trackViewedItem"); assert.equal(q[1][1].ItemId, "319628246");
-});
-await t("página sin producto: carga klaviyo.js sin eventos; og:image no-https se descarta; error de red es silencioso", async () => {
-  let r = run({ LS: { store: { id: 5 } }, config: { company_id: "AbC123" } }); await r.settle();
-  assert.equal(r.appended.length, 1); assert.equal(r.win._learnq.length, 0);
-  r = run({ LS: { store: { id: 5 }, product: { id: 9, name: "x" } }, config: { company_id: "AbC123" }, ogImage: "http://insecure/x.jpg" }); await r.settle();
-  assert.equal(r.win._learnq[0][2].ImageURL, undefined);
-  r = run({ LS: { store: { id: 5 } }, config: {}, fetchFails: true }); await r.settle(); assert.equal(r.appended.length, 0);
+  assert.equal(r.win._learnq.length, 0);
 });
 await t("idempotente: cargarlo dos veces no duplica", async () => {
   const r = run({ LS: { store: { id: 5 } }, config: { company_id: "AbC123" } });

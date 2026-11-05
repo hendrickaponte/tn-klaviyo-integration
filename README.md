@@ -17,10 +17,11 @@ Stack: Supabase (Postgres + Edge Functions/Deno) + React/Vite + Nimbus DS + SDK 
 | Catálogo | Sí | Producto y variantes con precio, precio de comparación, SKU, stock e imagen. Stock sin control se envía como 999.999. |
 | Sincronización inicial | Sí | Clientes, productos y pedidos pagados de los últimos 12 meses. |
 | Consentimiento de marketing | Opt-in | `accepts_marketing` → suscripción. Apagado por defecto. |
-| Pop-ups, formularios y Active on Site | Sí | Script onsite que carga `klaviyo.js` con la Public API key de cada tienda. |
-| Viewed Product | Sí | Datos mínimos: nombre, ID, URL, imagen y moneda. |
-| Added to Cart | Sí (probado en tienda real) | Vía NubeSDK (`cart:add:success`), no vía el script onload. Ver "Added to Cart (NubeSDK)" abajo. |
-| Started Checkout, Refunded Order | No | Pendiente. |
+| Pop-ups, formularios y Active on Site | Por verificar | Script onsite que carga `klaviyo.js` con la Public API key de cada tienda. Active on Site lo genera `klaviyo.js` (necesita DOM, no se puede mandar desde NubeSDK) y solo para navegadores identificados. Reportado como no funcionando: en diagnóstico. |
+| Viewed Product | Sí (SDK, sin probar en tienda) | Vía NubeSDK (`page:loaded` / `location:updated`, `location.page.type === "product"`). Nombre, ID, URL, imagen, precio de la primera variante y moneda. |
+| Added to Cart | Sí (probado en tienda real) | Vía NubeSDK (`cart:add:success`), no vía el script onload. Ver "Eventos de NubeSDK" abajo. |
+| Started Checkout | Sí (SDK, sin probar en tienda) | Vía NubeSDK (`checkout:ready` con `step === "start"`), una vez por carrito y sesión. Ver "Eventos de NubeSDK". |
+| Refunded Order | No | Pendiente. |
 | `ShippingOption` / tracking | No | No están en el nivel superior del pedido en la API 2025-03; probablemente en `fulfillments[]`, sin verificar. |
 | OAuth de Klaviyo | No | Usa una Private API key por tienda. |
 
@@ -39,11 +40,11 @@ Tienda ──script onsite (portal de TN)──► onsite-config (devuelve solo 
 - No se guardan datos de clientes en la base propia (solo IDs en los logs); los privacy webhooks hacen ack.
 - `onsite-config` responde con CORS `*` a propósito: el script corre en dominios de tienda arbitrarios y solo devuelve la Public API key, que ya es visible en el HTML de cualquier tienda con Klaviyo.
 
-### Added to Cart (NubeSDK)
+### Eventos de NubeSDK (Added to Cart, Viewed Product, Started Checkout)
 
 > **Requisito importante:** Added to Cart necesita el Storefront SDK (NubeSDK). Para la tienda de prueba hay que pedir a Tiendanube que active el tag `enable-nube-sdk-all-apps`. Una vez que la app esté homologada y publicada, ya no hace falta pedirlo para las demás tiendas.
 
-El evento `cart:add` / `cart:add:success` ([tiendanube.dev/apps/nube-sdk/events/cart](https://tiendanube.dev/apps/nube-sdk/events/cart)) **solo existe dentro de NubeSDK**: las apps NubeSDK corren en un Web Worker aislado (sin `window`, sin `document`, sin `_learnq`), así que no se puede escuchar desde `onsite/klaviyo-onsite.js` (ese script está registrado explícitamente "sin NubeSDK"). Por eso el soporte de ATC vive en un script aparte:
+El evento `cart:add` / `cart:add:success` ([tiendanube.dev/apps/nube-sdk/events/cart](https://tiendanube.dev/apps/nube-sdk/events/cart)) **solo existe dentro de NubeSDK**: las apps NubeSDK corren en un Web Worker aislado (sin `window`, sin `document`, sin `_learnq`), así que no se puede escuchar desde `onsite/klaviyo-onsite.js` (ese script está registrado explícitamente "sin NubeSDK"). Por eso el soporte de ATC vive en un script aparte, que también manda Viewed Product y Started Checkout (el script onload ya no manda eventos, solo carga `klaviyo.js`):
 
 ```
 onsite/nube-sdk/   App NubeSDK (src/main.ts) que escucha cart:add:success y manda "Added to Cart"
@@ -59,6 +60,10 @@ Decisiones de esta parte:
 - `state.eventPayload` es un objeto en Storefront y un array en Checkout (ver doc); se normaliza a lista y se manda un evento por ítem.
 - Sin reintentos: si el `fetch` falla (red caída, bloqueador de contenido) el evento se pierde silenciosamente — mismo criterio que el resto del script onsite ("nunca romper la tienda").
 - `KLAVIYO_REVISION` queda hardcodeada en el archivo (el worker no tiene `Deno.env`): mantenerla sincronizada a mano con `supabase/functions/_shared/klaviyo.ts`.
+
+- **Viewed Product**: `page:loaded` y `location:updated` (navegación SPA) pueden disparar para la misma página; se deduplica por URL dentro del worker. El precio es el de la primera variante.
+- **Started Checkout**: `checkout:ready` se dispara en cada página del checkout; solo se envía en `step === "start"` y se guarda el id del carrito en `asyncSessionStorage` para no repetirlo al recargar. `$value` es `cart.prices.total` (si no hay, `subtotal`).
+- Los tres eventos comparten identificación de perfil (email si hay cliente, si no `anonymous_id`) y la misma ruta de envío a `a.klaviyo.com/client/events`.
 
 ## Estructura
 
@@ -83,7 +88,7 @@ tests/                Pruebas sin dependencias (Node >= 22.18)
    - Scopes: `read_customers`, `read_orders`, `read_products`.
    - URL de la app embebida: la del frontend.
    - Webhooks de privacidad (`store/redact`, `customers/redact`, `customers/data_request`): `https://<ref>.supabase.co/functions/v1/tn-webhook`
-   - **Script onsite**: edita `CONFIG_URL` en `onsite/klaviyo-onsite.js` (reemplaza `<YOUR_PROJECT_REF>`) y súbelo como script nuevo: lugar Store, evento `onload`, sin NubeSDK, instalación automática. **Publica la versión**: en borrador no se sirve. Si la app ya estaba instalada en una tienda antes de crear el script, reinstálala en esa tienda.
+   - **Script onsite**: edita `CONFIG_URL` en `onsite/klaviyo-onsite.js` (reemplaza `<YOUR_PROJECT_REF>`) y súbelo como script nuevo: lugar Store, disparador `onload` (o primera interacción: hoy está así en el portal, pero retrasa pop-ups y Active on Site), sin NubeSDK, instalación automática. **Publica la versión**: en borrador no se sirve. Si la app ya estaba instalada en una tienda antes de crear el script, reinstálala en esa tienda.
    - **Script NubeSDK (Added to Cart)** (requiere el tag `enable-nube-sdk-all-apps` en la tienda de prueba; ver "Added to Cart (NubeSDK)"): en `onsite/nube-sdk/`, edita `CONFIG_URL` en `src/main.ts` (mismo `<YOUR_PROJECT_REF>`), `npm install` y `npm run build` (bundlea `dist/main.min.js` con tsup). En la misma app del Partner Portal, **Scripts → Create script** (es un script nuevo, no una app nueva): habilita el flag **Uses Nube SDK**, apunta el archivo/URL a `dist/main.min.js` y publicá la versión. Si vas a desarrollar en vivo, usa `npm run dev` + Local Mode de NubeSDK DevTools en vez de una URL de dev fija. Ver [tiendanube.dev/apps/nube-sdk/getting-started](https://tiendanube.dev/apps/nube-sdk/getting-started).
 6. **Klaviyo**: crea una Private API key con acceso de lectura/escritura a cuentas, perfiles, eventos, catálogo y suscripciones (solo se puede acotar al crearla). Para los pop-ups necesitas además la Public API key (6 caracteres).
 7. Instala la app en una tienda de prueba, conecta la key, guarda los ajustes y lanza la sincronización inicial.
