@@ -1,4 +1,7 @@
-/* Tiendanube ⇄ Klaviyo — script onsite (DOM, sin NubeSDK).
+// Fuente única del script DOM que carga klaviyo.js. Se sirve desde la Edge Function `onsite-script`
+// (index.ts) y se instala en el footer del tema. Los tests importan SCRIPT desde acá.
+// String.raw para conservar las barras invertidas de las regex tal cual.
+export const SCRIPT = String.raw`/* Tiendanube ⇄ Klaviyo — script onsite (DOM, sin NubeSDK).
  * Se instala en el footer del tema (Brand editor), NO en el Partner Portal:
  *   <script async src="https://<dominio-del-frontend>/klaviyo-onsite.js"></script>
  * Si cambia el proyecto de Supabase, edita CONFIG_URL.
@@ -43,3 +46,4 @@
   }
   for (var i = 0; i < EVENTS.length; i++) window.addEventListener(EVENTS[i], onFirstInteraction, { passive: true, once: true });
 })();
+`;

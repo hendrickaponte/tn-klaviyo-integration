@@ -31,7 +31,7 @@ Stack: Supabase (Postgres + Edge Functions/Deno) + React/Vite + Nimbus DS + SDK 
 Admin TN (iframe: web/) ──POST + session token──► klaviyo-api      (conectar, ajustes, sincronización por páginas)
 TN ──webhooks firmados con HMAC──► tn-webhook ──► API TN (detalle) ──► API Klaviyo
 TN ──?code=──► tn-oauth-callback   (guarda el token cifrado, registra webhooks, redirige al admin)
-Tienda ──script DOM (footer del tema, hospedado con el frontend)──► onsite-config (devuelve solo la Public API key) ──► klaviyo.js
+Tienda ──script DOM (footer del tema, lo sirve onsite-script)──► onsite-config (devuelve solo la Public API key) ──► klaviyo.js
 ```
 
 - Tokens de TN y API keys de Klaviyo: AES-256-GCM, IV aleatorio por cifrado. Nunca se devuelven al frontend ni se loguean.
@@ -68,10 +68,10 @@ Decisiones de esta parte:
 ## Estructura
 
 ```
-supabase/functions/   Edge Functions (klaviyo-api, tn-webhook, tn-oauth-callback, onsite-config) y _shared/
+supabase/functions/   Edge Functions (klaviyo-api, tn-webhook, tn-oauth-callback, onsite-config, onsite-script) y _shared/
+                      onsite-script/script.ts: fuente del script DOM que carga klaviyo.js (se instala en el footer del tema)
 supabase/migrations/  Esquema (init + onsite)
 web/                  Frontend embebido (React + Vite + Nimbus)
-web/public/           klaviyo-onsite.js: script DOM que se instala en el footer del tema (se sirve con el frontend)
 onsite/               Scripts que se suben al Partner Portal de Tiendanube
 onsite/nube-sdk/      Script NubeSDK (Added to Cart); necesita build (ver Despliegue)
 tests/                Pruebas sin dependencias (Node >= 22.18)
@@ -82,14 +82,14 @@ tests/                Pruebas sin dependencias (Node >= 22.18)
 1. **Supabase**: crea un proyecto, `supabase link --project-ref <ref>` y `supabase db push` (aplica las dos migraciones).
 2. **Secretos**: `cp supabase/functions/.env.example supabase/functions/.env`, complétalo y `supabase secrets set --env-file supabase/functions/.env`. Genera `ENCRYPTION_KEY` con `openssl rand -base64 32` y guárdala: si se pierde hay que reconectar todas las tiendas.
 3. **Funciones** (todas sin verificación JWT de Supabase; cada una tiene su propia auth: HMAC o session token):
-   `supabase functions deploy tn-oauth-callback tn-webhook klaviyo-api onsite-config --no-verify-jwt`
+   `supabase functions deploy tn-oauth-callback tn-webhook klaviyo-api onsite-config onsite-script --no-verify-jwt`
 4. **Frontend** (`web/`): `npm install`, `cp .env.example .env`, completa y `npm run build`. Despliega `dist/` (hay `vercel.json` con CSP y `frame-ancestors`). Las dependencias `@nimbus-ds/*` y `@tiendanube/nexo` están en `latest` y no hay lockfile: ejecuta `npm install`, **commitea el lockfile** y fija las versiones.
 5. **Partner Portal de Tiendanube**:
    - URL de redirección OAuth: `https://<ref>.supabase.co/functions/v1/tn-oauth-callback`
    - Scopes: `read_customers`, `read_orders`, `read_products`.
    - URL de la app embebida: la del frontend.
    - Webhooks de privacidad (`store/redact`, `customers/redact`, `customers/data_request`): `https://<ref>.supabase.co/functions/v1/tn-webhook`
-   - **Script DOM (`klaviyo.js`)**: ya no se sube al portal. Vive en `web/public/klaviyo-onsite.js` y se sirve con el frontend en `https://<dominio-del-frontend>/klaviyo-onsite.js`. Cada tienda lo instala pegando esto en el **footer del Brand editor**: `<script async src="https://<dominio-del-frontend>/klaviyo-onsite.js"></script>`. Detecta la company sola: lee `LS.store.id` y pide la Public API key a `onsite-config`; sin key, no hace nada. Arranca en la primera interacción del visitante (scroll, clic, tecla, mouse o toque). El footer solo cubre el storefront, no el checkout. Si queda un script `Klaviyo onsite` en el portal, desactívalo para no cargarlo dos veces (el script se protege con `__tnKlaviyoOnsite`, pero no hay por qué duplicar). Si cambia el proyecto de Supabase, edita `CONFIG_URL` en el archivo.
+   - **Script DOM (`klaviyo.js`)**: no se sube al portal. La fuente es `supabase/functions/onsite-script/script.ts` y la Edge Function `onsite-script` lo sirve como JavaScript. Cada tienda lo instala pegando esto en el **footer del Brand editor**: `<script async src="https://<YOUR_PROJECT_REF>.supabase.co/functions/v1/onsite-script"></script>`. Detecta la company sola: lee `LS.store.id` y pide la Public API key a `onsite-config`; sin key, no hace nada. Arranca en la primera interacción del visitante (scroll, clic, tecla, mouse o toque). El footer solo cubre el storefront, no el checkout. Si queda un script `Klaviyo onsite` en el portal, desactívalo para no cargarlo dos veces (el script se protege con `__tnKlaviyoOnsite`). Si cambia el proyecto de Supabase, edita `CONFIG_URL` en `script.ts` y vuelve a desplegar `onsite-script`.
    - **Script NubeSDK (Added to Cart)** (requiere el tag `enable-nube-sdk-all-apps` en la tienda de prueba; ver "Added to Cart (NubeSDK)"): en `onsite/nube-sdk/`, edita `CONFIG_URL` en `src/main.ts` (mismo `<YOUR_PROJECT_REF>`), `npm install` y `npm run build` (bundlea `dist/main.min.js` con tsup). En la misma app del Partner Portal, **Scripts → Create script** (es un script nuevo, no una app nueva): habilita el flag **Uses Nube SDK**, apunta el archivo/URL a `dist/main.min.js` y publicá la versión. Si vas a desarrollar en vivo, usa `npm run dev` + Local Mode de NubeSDK DevTools en vez de una URL de dev fija. Ver [tiendanube.dev/apps/nube-sdk/getting-started](https://tiendanube.dev/apps/nube-sdk/getting-started).
 6. **Klaviyo**: crea una Private API key con acceso de lectura/escritura a cuentas, perfiles, eventos, catálogo y suscripciones (solo se puede acotar al crearla). Para los pop-ups necesitas además la Public API key (6 caracteres).
 7. Instala la app en una tienda de prueba, conecta la key, guarda los ajustes y lanza la sincronización inicial.
