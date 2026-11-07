@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-// El script vive como String.raw en script.ts (se sirve desde la Edge Function onsite-script). Se extrae el
+// El script vive como String.raw en index.ts (se sirve desde la Edge Function onsite-script). Se extrae el
 // literal tal cual, sin importar el .ts (Node no lo trata como ESM sin package.json con "type": "module").
-const tsSrc = readFileSync(new URL("../supabase/functions/onsite-script/script.ts", import.meta.url), "utf8");
+const tsSrc = readFileSync(new URL("../supabase/functions/onsite-script/index.ts", import.meta.url), "utf8");
 const src = tsSrc.slice(tsSrc.indexOf("String.raw`") + "String.raw`".length, tsSrc.lastIndexOf("`;"));
 let n = 0; const t = async (name, fn) => { try { await fn(); n++; console.log("PASS", name); } catch (e) { console.log("FAIL", name, "\n  ", e.message); process.exitCode = 1; } };
 
