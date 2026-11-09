@@ -11,7 +11,7 @@ const SCRIPT = String.raw`/* Tiendanube ⇄ Klaviyo — script onsite (DOM, sin 
  * Si cambia el proyecto de Supabase, edita CONFIG_URL.
  * 1) Espera la primera interacción del visitante (scroll, clic, tecla, mouse o toque).
  * 2) Lee la tienda desde LS.store.id y pide la public key a la app. Sin key => no hace nada.
- * 3) Carga klaviyo.js (habilita pop-ups/formularios y Active on Site).
+ * 3) Carga klaviyo.js, que pinta formularios y pop-ups. (Active on Site lo manda el SDK por API.)
  * Viewed Product, Added to Cart y Started Checkout ya NO salen de acá: los manda el script NubeSDK
  * (onsite/nube-sdk). Este script solo carga klaviyo.js. */
 (function () {
