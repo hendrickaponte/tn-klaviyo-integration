@@ -17,7 +17,8 @@ Stack: Supabase (Postgres + Edge Functions/Deno) + React/Vite + Nimbus DS + SDK 
 | Catálogo | Sí | Producto y variantes con precio, precio de comparación, SKU, stock e imagen. Stock sin control se envía como 999.999. |
 | Sincronización inicial | Sí | Clientes, productos y pedidos pagados de los últimos 12 meses. |
 | Consentimiento de marketing | Opt-in | `accepts_marketing` → suscripción. Apagado por defecto. |
-| Pop-ups, formularios y Active on Site | Por verificar | Script onsite que carga `klaviyo.js` con la Public API key de cada tienda. Active on Site lo genera `klaviyo.js` (necesita DOM, no se puede mandar desde NubeSDK) y solo para navegadores identificados. Reportado como no funcionando: en diagnóstico. |
+| Pop-ups y formularios | Sí | Script DOM del footer que carga `klaviyo.js` con la Public API key de cada tienda. |
+| Active on Site | Enviado por el SDK (sin probar en tienda) | `klaviyo.js` solo lo genera para navegadores identificados (ver la ayuda de Klaviyo, "Onsite Tracking"), así que el SDK manda además un evento "Active on Site" por API, una vez por sesión, también para visitantes anónimos. Riesgo: puede crear una métrica distinta a la nativa si Klaviyo las separa por integración; verificar en Analytics → Metrics. |
 | Viewed Product | Sí (SDK, sin probar en tienda) | Vía NubeSDK (`page:loaded` / `location:updated`, `location.page.type === "product"`). Nombre, ID, URL, imagen, precio de la primera variante y moneda. |
 | Added to Cart | Sí (probado en tienda real) | Vía NubeSDK (`cart:add:success`), no vía el script onload. Ver "Eventos de NubeSDK" abajo. |
 | Started Checkout | Sí (SDK, sin probar en tienda) | Vía NubeSDK (`checkout:ready` con `step === "start"`), una vez por carrito y sesión. Ver "Eventos de NubeSDK". |

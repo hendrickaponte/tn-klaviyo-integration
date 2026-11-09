@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { App } from "../onsite/nube-sdk/src/main.ts";
 import {
+  activeOnSiteEventBody,
   addedToCartEventBody,
+  cleanPageUrl,
   localized,
   startedCheckoutEventBody,
   viewedProductEventBody,
@@ -220,8 +222,9 @@ function klaviyoMock(calls) {
     return { ok: true, json: async () => ({}) };
   };
 }
-const eventsOf = (calls) => calls.filter((c) => c.url.startsWith("https://a.klaviyo.com/client/events"))
+const allEventsOf = (calls) => calls.filter((c) => c.url.startsWith("https://a.klaviyo.com/client/events"))
   .map((c) => JSON.parse(c.opts.body).data.attributes.metric.data.attributes.name);
+const eventsOf = (calls) => allEventsOf(calls).filter((n) => n !== "Active on Site");
 
 await t("Viewed Product: page:loaded + location:updated en la misma URL manda un solo evento; en otra URL, otro", async () => {
   const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
@@ -292,6 +295,28 @@ await t("al arrancar tarde en checkout step start: manda Started Checkout una so
     await new Promise((r) => setTimeout(r, 20));
     await listeners["checkout:ready"]({ store: { id: 5 }, customer: null, ...extra });
     assert.deepEqual(eventsOf(calls), ["Started Checkout"]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await t("cleanPageUrl quita query y hash; activeOnSiteEventBody arma el evento anónimo", () => {
+  assert.equal(cleanPageUrl("https://s.example/p/x/?utm_source=a&variant=1#h"), "https://s.example/p/x/");
+  assert.equal(cleanPageUrl("http://s.example/p/"), undefined);
+  assert.equal(cleanPageUrl(undefined), undefined);
+  const a = activeOnSiteEventBody("https://s.example/?utm=1", { anonymous_id: "v-1" }).data.attributes;
+  assert.equal(a.metric.data.attributes.name, "Active on Site");
+  assert.deepEqual(a.profile.data.attributes, { anonymous_id: "v-1" });
+  assert.equal(a.properties.page, "https://s.example/");
+});
+
+await t("Active on Site: se manda una sola vez por sesión aunque el SDK arranque tarde y llegue page:loaded", async () => {
+  const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
+  try {
+    const location = { url: "https://s/?utm=1", page: { type: "home" } };
+    const { nube, listeners } = mockNube({ store: { id: 5 }, extra: { location } });
+    App(nube);
+    await new Promise((r) => setTimeout(r, 20));
+    await listeners["page:loaded"]({ store: { id: 5 }, customer: null, location });
+    assert.deepEqual(allEventsOf(calls), ["Active on Site"]);
   } finally { globalThis.fetch = realFetch; }
 });
 

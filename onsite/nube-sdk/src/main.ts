@@ -12,7 +12,7 @@
 // ANTES DE BUILDEAR: reemplazá <YOUR_PROJECT_REF> en CONFIG_URL (mismo valor que onsite/klaviyo-onsite.js).
 import type { NubeSDK, NubeSDKState } from "@tiendanube/nube-sdk-types";
 import {
-  addedToCartEventBody, cartAddItems, isValidCompanyId, startedCheckoutEventBody, viewedProductEventBody,
+  activeOnSiteEventBody, addedToCartEventBody, cartAddItems, isValidCompanyId, startedCheckoutEventBody, viewedProductEventBody,
   type ProfileIdentifier,
 } from "./lib.ts";
 
@@ -123,6 +123,21 @@ export function App(nube: NubeSDK): void {
   };
   nube.on("checkout:ready", onCheckout);
 
+  // Active on Site: una vez por sesión del navegador (asyncSessionStorage). klaviyo.js solo lo genera para
+  // navegadores identificados; este evento cubre también a los visitantes anónimos.
+  const onSession = async (state: Readonly<NubeSDKState>) => {
+    if (!state.location) return;
+    const storage = nube.getBrowserAPIs().asyncSessionStorage;
+    const key = "klaviyo_active_on_site";
+    if (await storage.getItem(key)) return;
+    await storage.setItem(key, "1");
+    const companyId = await getCompanyId();
+    if (!companyId) return;
+    const profile = await profileIdentifier(nube, state);
+    await postEvent(companyId, activeOnSiteEventBody(state.location?.url, profile));
+  };
+  nube.on("page:loaded", onSession);
+
   // El script se carga en la primera interacción (disparador "onfirstinteraction" del portal), cuando
   // page:loaded / checkout:ready ya se dispararon. Por eso también se evalúa el estado actual al arrancar;
   // la deduplicación (URL en memoria, carrito en sessionStorage) evita enviar dos veces el mismo evento.
@@ -130,6 +145,7 @@ export function App(nube: NubeSDK): void {
     const initial = nube.getState();
     void onLocation(initial);
     void onCheckout(initial);
+    void onSession(initial);
   } catch {
     // silencioso: nunca romper la tienda
   }

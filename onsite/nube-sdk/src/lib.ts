@@ -168,3 +168,20 @@ function eventBody(
     },
   };
 }
+
+/** Ruta sin parámetros de seguimiento (utm_*, etc.): solo origen + path. */
+export function cleanPageUrl(url: string | undefined): string | undefined {
+  try {
+    if (!url) return undefined;
+    const u = new URL(url);
+    return httpsOnly(u.origin + u.pathname);
+  } catch {
+    return undefined;
+  }
+}
+
+/** "Active on Site" enviado por la API (klaviyo.js solo lo genera para navegadores identificados). */
+export function activeOnSiteEventBody(pageUrl: string | undefined, profile: ProfileIdentifier) {
+  const properties = clean({ page: cleanPageUrl(pageUrl), "Source Name": "Tiendanube" });
+  return eventBody("Active on Site", properties, profile, undefined, undefined);
+}
