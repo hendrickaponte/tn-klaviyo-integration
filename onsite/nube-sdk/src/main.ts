@@ -107,7 +107,7 @@ export function App(nube: NubeSDK): void {
 
   // Started Checkout: checkout:ready se dispara en cada página del checkout; solo el paso "start".
   // Guard por id de carrito en sessionStorage para no duplicar al recargar el checkout.
-  nube.on("checkout:ready", async (state) => {
+  const onCheckout = async (state: Readonly<NubeSDKState>) => {
     const page = state.location?.page;
     if (page?.type !== "checkout" || page.data?.step !== "start") return;
     const companyId = await getCompanyId();
@@ -120,5 +120,17 @@ export function App(nube: NubeSDK): void {
     await postEvent(companyId, startedCheckoutEventBody(
       state.cart, state.location.url, state.store?.currency_details?.code, profile,
     ));
-  });
+  };
+  nube.on("checkout:ready", onCheckout);
+
+  // El script se carga en la primera interacción (disparador "onfirstinteraction" del portal), cuando
+  // page:loaded / checkout:ready ya se dispararon. Por eso también se evalúa el estado actual al arrancar;
+  // la deduplicación (URL en memoria, carrito en sessionStorage) evita enviar dos veces el mismo evento.
+  try {
+    const initial = nube.getState();
+    void onLocation(initial);
+    void onCheckout(initial);
+  } catch {
+    // silencioso: nunca romper la tienda
+  }
 }

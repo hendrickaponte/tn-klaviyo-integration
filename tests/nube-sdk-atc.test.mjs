@@ -69,13 +69,13 @@ await t("addedToCartEventBody con perfil anónimo y sin thumbnail/sku no ensucia
   assert.equal(attrs.properties.RowTotal, 5);
 });
 
-function mockNube({ store = { id: 1234567 }, customer = null, eventPayload = null, storage = new Map() } = {}) {
+function mockNube({ store = { id: 1234567 }, customer = null, eventPayload = null, storage = new Map(), extra = {} } = {}) {
   const listeners = {};
   const session = new Map();
   const nube = {
     on: (event, fn) => { listeners[event] = fn; },
     send: () => {},
-    getState: () => ({ store, customer, eventPayload }),
+    getState: () => ({ store, customer, eventPayload, ...extra }),
     getBrowserAPIs: () => ({
       asyncLocalStorage: {
         getItem: async (k) => (storage.has(k) ? storage.get(k) : null),
@@ -263,6 +263,34 @@ await t("Started Checkout: solo en step start, y no se repite para el mismo carr
     assert.deepEqual(eventsOf(calls), []);
     await listeners["checkout:ready"](st("start"));
     await listeners["checkout:ready"](st("start"));
+    assert.deepEqual(eventsOf(calls), ["Started Checkout"]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await t("al arrancar tarde (primera interacción) evalúa el estado actual: Viewed Product sin esperar page:loaded, sin duplicar", async () => {
+  const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
+  try {
+    const location = { url: "https://s/p1", page: { type: "product", data: { product: { id: 1, name: { es: "P" }, variants: [{ price: "1" }], images: [] } } } };
+    const { nube, listeners } = mockNube({ store: { id: 5, language: "es", currency_details: { code: "ARS" } }, extra: { location } });
+    App(nube);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(eventsOf(calls), ["Viewed Product"]);
+    await listeners["page:loaded"]({ store: { id: 5, language: "es" }, customer: null, location }); // mismo URL: no repite
+    assert.deepEqual(eventsOf(calls), ["Viewed Product"]);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+await t("al arrancar tarde en checkout step start: manda Started Checkout una sola vez", async () => {
+  const calls = []; const realFetch = globalThis.fetch; globalThis.fetch = klaviyoMock(calls);
+  try {
+    const extra = {
+      cart: { id: "c9", items: [{ product_id: 1, price: "5", quantity: 1 }], prices: { total: 5 } },
+      location: { url: "https://s/checkout/start", page: { type: "checkout", data: { step: "start" } } },
+    };
+    const { nube, listeners } = mockNube({ store: { id: 5, currency_details: { code: "ARS" } }, extra });
+    App(nube);
+    await new Promise((r) => setTimeout(r, 20));
+    await listeners["checkout:ready"]({ store: { id: 5 }, customer: null, ...extra });
     assert.deepEqual(eventsOf(calls), ["Started Checkout"]);
   } finally { globalThis.fetch = realFetch; }
 });
