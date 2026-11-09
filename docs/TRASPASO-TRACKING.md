@@ -64,9 +64,20 @@ Todo lo que se vea en pantalla de Klaviyo (formularios, pop-ups, flyouts) lo dib
 - Cada tienda lo instala en el footer del Brand editor: `<script async src="https://darqvjlojlsfjhfipubd.supabase.co/functions/v1/onsite-script"></script>`.
 - Si cambia el proyecto de Supabase, editar `CONFIG_URL` dentro de `index.ts`.
 
+### 2.1 Instalación del DOM en el footer: solución temporal
+
+Instalar el script DOM en el footer del Brand editor fue una decisión **por premura**, no la arquitectura deseada. Obliga a que cada comerciante pegue el código a mano en su tema y no se actualiza con la app.
+
+**Acción recomendada (pendiente):** escribir a **ecosystem@tiendanube.com** y pedir que agreguen la app a una **whitelist** usando su App ID (`49733`), para que la app pueda correr **script DOM (legacy) y scripts SDK en la misma app**. Hoy, sin esa autorización, un script DOM dentro de la app impide que el script SDK se registre (ver sección 3).
+
+Cuando la whitelist esté aprobada:
+1. Crear el script DOM en el Partner Portal de la app (sin "Uses Nube SDK", `location: store`, `onfirstinteraction`, auto-instalado). La fuente es el mismo `SCRIPT` de `supabase/functions/onsite-script/index.ts`; el portal pide un archivo/URL, así que hay que alojarlo o servirlo desde la Edge Function.
+2. Verificar que el script SDK (`atc1`, `Checkout Script`) sigue apareciendo en `installed_apps_scripts` y enviando eventos.
+3. Quitar el `<script>` del footer de las tiendas para no cargar `klaviyo.js` dos veces (el script se protege con `window.__tnKlaviyoOnsite`, pero conviene no depender de eso).
+
 ## 3. Lecciones aprendidas (importante)
 
-- **Un script DOM dentro de la misma app impidió que el script SDK se registrara.** Por eso el DOM va en el footer y no en el portal. No volver a mezclarlos en la app.
+- **Un script DOM dentro de la misma app impidió que el script SDK se registrara.** Por eso el DOM va (temporalmente) en el footer y no en el portal. No volver a mezclarlos en la app hasta que Ecosystem agregue la app a la whitelist (ver 2.1).
 - Un script SDK tiene `location` fija (store *o* checkout). Para cubrir checkout hay que crear otro script, con la misma build.
 - Los scripts cargan en `onfirstinteraction`: de ahí el `getState()` inicial. Sin él no salían Viewed Product ni Started Checkout.
 - Hay que reinstalar la app o esperar tras crear/activar scripts; verificar qué versión sirve la tienda antes de depurar el código.
@@ -94,6 +105,7 @@ El Checkout Script estaba aún en la versión 1 (sin Active on Site) en la últi
 
 ### 4.2 Otros pendientes
 
+- Pedir a ecosystem@tiendanube.com la whitelist de la app (App ID `49733`) para DOM legacy + SDK en la misma app, y mover el DOM del footer al portal (ver 2.1).
 - Started Checkout anónimo no sirve para flujos de carrito abandonado (necesitan email); evaluar enviarlo solo si hay email.
 - Aplicar `cleanPageUrl` (quita query y hash) también a la URL de Viewed Product.
 - Para homologar: política de privacidad publicada, pantalla de errores de webhooks, manejo de `app/suspended` y `app/resumed`.
